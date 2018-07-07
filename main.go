@@ -27,11 +27,11 @@ func die(err error) {
 func main() {
 
 	domain = os.Getenv(`DDNS_DOMAIN`)
-	username = os.Getenv(`DDNS_UN`)
-	password = os.Getenv(`DDNS_PW`)
+	username = os.Getenv(`ENOM_UN`)
+	password = os.Getenv(`ENOM_PW`)
 
 	if domain == "" || username == "" || password == "" {
-		die(errors.New(`set DDNS_DOMAIN, DDNS_UN DDNS_PW env vars`))
+		die(errors.New(`set DDNS_DOMAIN, ENOM_UN ENOM_PW env vars`))
 	}
 
 	d := strings.Split(domain, ".")
