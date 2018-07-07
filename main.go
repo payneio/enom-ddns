@@ -88,7 +88,7 @@ func main() {
 
 	// Check and/or modify a record here
 	if dirty || !found {
-		err := SetRecords(domain, update)
+		err := SetRecords(tld, sld, name, update)
 		if err != nil {
 			die(err)
 		}
@@ -141,28 +141,27 @@ func GetRecords(tld, sld string) ([]Record, error) {
 	}
 
 	if hr.ErrCount > 0 {
-		return nil, errors.New(hr.Errors.Err1)
+		return nil, errors.New(hr.Errors.Err1 + " " + sld + "." + tld)
 	}
 
 	return hr.Records, nil
 }
 
-func SetRecords(domain string, records []Record) error {
+func SetRecords(tld, sld, name string, records []Record) error {
 
-	fragments := strings.Split(domain, ".")
 	params := url.Values{
 		"UID":          []string{username},
 		"PW":           []string{password},
 		"Command":      []string{`SetHosts`},
-		"TLD":          []string{fragments[1]},
-		"SLD":          []string{fragments[0]},
+		"TLD":          []string{tld},
+		"SLD":          []string{sld},
 		"ResponseType": []string{`XML`},
 	}
 
 	for i, record := range records {
 		si := strconv.Itoa(i + 1)
-		params.Set(`RecordName`+si, record.Name)
-		params.Set(`RecordType`+si, record.Type)
+		params.Set(`HostName`+si, record.Name)
+		params.Set(`HostType`+si, record.Type)
 		params.Set(`Address`+si, record.Address)
 		if record.MXPref != "" {
 			params.Set(`MXPref`+si, record.MXPref)
@@ -186,7 +185,7 @@ func SetRecords(domain string, records []Record) error {
 	}
 
 	if hr.ErrCount > 0 {
-		return errors.New(hr.Errors.Err1)
+		return errors.New(hr.Errors.Err1 + " " + sld + "." + tld)
 	}
 
 	return err
