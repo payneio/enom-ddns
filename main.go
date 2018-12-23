@@ -17,7 +17,7 @@ import (
 const (
 	enom            = `https://dynamic.name-services.com/interface.asp`
 	ipURI           = `http://checkip.amazonaws.com`
-	defaultInterval = 3600
+	defaultInterval = 600
 )
 
 var (
@@ -27,6 +27,7 @@ var (
 
 func die(err error) {
 	Error.Println(err)
+	os.Exit(-1)
 }
 
 func main() {
@@ -56,17 +57,19 @@ func main() {
 	name, sld, tld := d[0], d[1], d[2]
 	zone := fmt.Sprintf(`%s.%s`, sld, tld)
 
-	// Get my IP
-	ip, err := GetIP()
-	if err != nil {
-		die(err)
-	}
-
-	// Send Dynamic DNS update
+	// Loop on interval forever
 	for {
+
+		// Get my IP
+		ip, err := GetIP()
+		if err != nil {
+			Error.Println(err)
+		}
+
+		// Send Dynamic DNS update
 		err = EnomDDNSUpdate(name, zone, ip, username, password)
 		if err != nil {
-			die(err)
+			Error.Println(err)
 		} else {
 			Info.Printf("Dynamic DNS updated. %s.%s = %s\n", name, zone, ip)
 		}
