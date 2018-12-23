@@ -6,26 +6,33 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	enom  = `https://dynamic.name-services.com/interface.asp`
-	ipURI = `http://checkip.amazonaws.com`
+	enom            = `https://dynamic.name-services.com/interface.asp`
+	ipURI           = `http://checkip.amazonaws.com`
+	defaultInterval = 3600
 )
 
 var (
+	Info, Error                *log.Logger
 	domain, username, password string
 )
 
 func die(err error) {
-	fmt.Println(err)
-	os.Exit(-1)
+	Error.Println(err)
 }
 
 func main() {
+
+	Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime)
 
 	domain = os.Getenv(`DDNS_DOMAIN`)
 	username = os.Getenv(`ENOM_UN`)
@@ -35,6 +42,13 @@ func main() {
 		die(errors.New(`set DDNS_DOMAIN, ENOM_PW env vars`))
 	}
 
+	// The interval for refreshing the DDNS
+	interval, err := strconv.Atoi(os.Getenv(`INTERVAL`))
+	if err != nil || interval == 0 {
+		interval = defaultInterval
+	}
+
+	// Configure domain
 	d := strings.Split(domain, ".")
 	if len(d) != 3 {
 		die(errors.New(`only <record>.<sld>.<tld> domains are supported`))
@@ -49,12 +63,15 @@ func main() {
 	}
 
 	// Send Dynamic DNS update
-	err = EnomDDNSUpdate(name, zone, ip, username, password)
-	if err != nil {
-		die(err)
+	for {
+		err = EnomDDNSUpdate(name, zone, ip, username, password)
+		if err != nil {
+			die(err)
+		} else {
+			Info.Printf("Dynamic DNS updated. %s.%s = %s\n", name, zone, ip)
+		}
+		time.Sleep(time.Duration(interval) * time.Second)
 	}
-
-	fmt.Printf("Dynamic DNS updated. %s.%s = %s\n", name, zone, ip)
 }
 
 // GetIP uses an IP service at AWS that returns the IP address specified
@@ -117,7 +134,7 @@ func EnomDDNSUpdate(hostname, zone, ipAddress, username, domainPassword string) 
 	return err
 }
 
-type Error struct {
+type Err struct {
 	Err1 string `xml:"Err1"`
 }
 
@@ -125,5 +142,5 @@ type CommandResult struct {
 	Command  string `xml:"Command"`
 	Language string `xml:"Language"`
 	ErrCount int    `xml:"ErrCount"`
-	Errors   Error  `xml:"errors"`
+	Errors   Err    `xml:"errors"`
 }
