@@ -1,23 +1,24 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 )
 
 const (
-	enom  = `https://reseller.enom.com/interface.asp`
+	enom  = `https://dynamic.name-services.com/interface.asp`
 	ipURI = `http://checkip.amazonaws.com`
 )
 
-var domain, username, password string
+var (
+	domain, username, password string
+)
 
 func die(err error) {
 	fmt.Println(err)
@@ -31,7 +32,7 @@ func main() {
 	password = os.Getenv(`ENOM_PW`)
 
 	if domain == "" || username == "" || password == "" {
-		die(errors.New(`set DDNS_DOMAIN, ENOM_UN ENOM_PW env vars`))
+		die(errors.New(`set DDNS_DOMAIN, ENOM_PW env vars`))
 	}
 
 	d := strings.Split(domain, ".")
@@ -39,6 +40,7 @@ func main() {
 		die(errors.New(`only <record>.<sld>.<tld> domains are supported`))
 	}
 	name, sld, tld := d[0], d[1], d[2]
+	zone := fmt.Sprintf(`%s.%s`, sld, tld)
 
 	// Get my IP
 	ip, err := GetIP()
@@ -46,58 +48,18 @@ func main() {
 		die(err)
 	}
 
-	// Get records for the domain
-	records, err := GetRecords(tld, sld)
+	// Send Dynamic DNS update
+	err = EnomDDNSUpdate(name, zone, ip, username, password)
 	if err != nil {
 		die(err)
 	}
 
-	// Update the records if necessary
-	var (
-		dirty  bool
-		found  bool
-		update []Record
-	)
-	for _, record := range records {
-		h := Record{
-			Name:    record.Name,
-			Type:    record.Type,
-			Address: record.Address,
-			MXPref:  record.MXPref,
-		}
-		if record.Name == name {
-			found = true
-			if record.Address != ip {
-				dirty = true
-				h.Address = ip
-				h.Type = `A`
-			}
-			if record.Name == "" {
-				record.Name = `@`
-			}
-		}
-		update = append(update, h)
-	}
-	if !found {
-		update = append(update, Record{
-			Name:    name,
-			Type:    `A`,
-			Address: ip,
-		})
-	}
-
-	// Check and/or modify a record here
-	if dirty || !found {
-		err := SetRecords(tld, sld, name, update)
-		if err != nil {
-			die(err)
-		}
-		fmt.Printf("%s updated to %s\n", domain, ip)
-	} else {
-		fmt.Printf("%s already set to %s. Skipping update.\n", domain, ip)
-	}
+	fmt.Printf("Dynamic DNS updated. %s.%s = %s\n", name, zone, ip)
 }
 
+// GetIP uses an IP service at AWS that returns the IP address specified
+// in HTTP client's request. In a NAT environment, this will generally be
+// the public IP of the WAN router.
 func GetIP() (string, error) {
 	resp, err := http.Get(ipURI)
 	if err != nil {
@@ -109,66 +71,30 @@ func GetIP() (string, error) {
 	return string(ip), err
 }
 
-func GetRecords(tld, sld string) ([]Record, error) {
+// EnomDDNSUpdate sends an update request to Enom's Dynamic DNS service
+func EnomDDNSUpdate(hostname, zone, ipAddress, username, domainPassword string) error {
 
-	resp, err := http.PostForm(
-		enom,
-		url.Values{
-			"UID":          []string{username},
-			"PW":           []string{password},
-			"Command":      []string{`GetHosts`},
-			"TLD":          []string{tld},
-			"SLD":          []string{sld},
-			"ResponseType": []string{`XML`},
-		},
+	// Enom's certificate is invalid, so let's turn of the verification
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: true,
+	}
+
+	resp, err := http.Get(
+		fmt.Sprintf(enom+
+			`?ResponseType=xml`+
+			`&Command=SetDNSHost`+
+			`&HostName=%s`+
+			`&Zone=%s`+
+			`&Address=%s`+
+			`&UID=%s`+
+			`&DomainPassword=%s`,
+			hostname,
+			zone,
+			ipAddress,
+			username,
+			domainPassword,
+		),
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Read response
-	body, err := ioutil.ReadAll(resp.Body)
-	defer resp.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse response
-	hr := &GetRecordsResponse{}
-	err = xml.Unmarshal(body, hr)
-	if err != nil {
-		return nil, err
-	}
-
-	if hr.ErrCount > 0 {
-		return nil, errors.New(hr.Errors.Err1 + " " + sld + "." + tld)
-	}
-
-	return hr.Records, nil
-}
-
-func SetRecords(tld, sld, name string, records []Record) error {
-
-	params := url.Values{
-		"UID":          []string{username},
-		"PW":           []string{password},
-		"Command":      []string{`SetHosts`},
-		"TLD":          []string{tld},
-		"SLD":          []string{sld},
-		"ResponseType": []string{`XML`},
-	}
-
-	for i, record := range records {
-		si := strconv.Itoa(i + 1)
-		params.Set(`HostName`+si, record.Name)
-		params.Set(`HostType`+si, record.Type)
-		params.Set(`Address`+si, record.Address)
-		if record.MXPref != "" {
-			params.Set(`MXPref`+si, record.MXPref)
-		}
-	}
-
-	resp, err := http.PostForm(enom, params)
 
 	// Read response
 	body, err := ioutil.ReadAll(resp.Body)
@@ -185,23 +111,10 @@ func SetRecords(tld, sld, name string, records []Record) error {
 	}
 
 	if hr.ErrCount > 0 {
-		return errors.New(hr.Errors.Err1 + " " + sld + "." + tld)
+		return errors.New(hr.Errors.Err1)
 	}
 
 	return err
-}
-
-type Record struct {
-	Name     string `xml:"name"`
-	Type     string `xml:"type"`
-	Address  string `xml:"address"`
-	RecordID string `xml:"hostid"`
-	MXPref   string `xml:"mxpref"`
-}
-
-type GetRecordsResponse struct {
-	CommandResult
-	Records []Record `xml:"host"`
 }
 
 type Error struct {
